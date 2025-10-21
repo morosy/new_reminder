@@ -23,6 +23,7 @@ class Reminder {
     final bool useSnooze;
     final int? snoozeIntervalMinutes;
     final int? snoozeMaxCount;
+    final int snoozeCount; // スヌーズ押下回数
     final bool isDone;
 
     const Reminder({
@@ -32,6 +33,7 @@ class Reminder {
         this.useSnooze = false,
         this.snoozeIntervalMinutes,
         this.snoozeMaxCount,
+        this.snoozeCount = 0,
         this.isDone = false,
     });
 
@@ -42,6 +44,7 @@ class Reminder {
         bool? useSnooze,
         int? snoozeIntervalMinutes,
         int? snoozeMaxCount,
+        int? snoozeCount,
         bool? isDone,
     }) {
         return Reminder(
@@ -51,6 +54,7 @@ class Reminder {
             useSnooze: useSnooze ?? this.useSnooze,
             snoozeIntervalMinutes: snoozeIntervalMinutes ?? this.snoozeIntervalMinutes,
             snoozeMaxCount: snoozeMaxCount ?? this.snoozeMaxCount,
+            snoozeCount: snoozeCount ?? this.snoozeCount,
             isDone: isDone ?? this.isDone,
         );
     }
@@ -65,10 +69,10 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
     final List<Reminder> _reminders = <Reminder>[
-        Reminder(title: 'ミーティング資料送付', when: DateTime.now().add(const Duration(hours: 2))),
-        Reminder(title: '牛乳を買う', when: DateTime.now().add(const Duration(hours: 6))),
+        Reminder(title: 'ミーティング資料送付', when: DateTime.now().add(const Duration(hours: 2)), useSnooze: true, snoozeCount: 0, snoozeIntervalMinutes: 5, snoozeMaxCount: 3),
+        Reminder(title: '牛乳を買う', when: DateTime.now().add(const Duration(minutes: 45))), // 1時間未満→注意色
         Reminder(title: '定例MTG', when: DateTime.now().add(const Duration(days: 1, hours: 1))),
-        Reminder(title: '友人の誕生日', when: DateTime.now().add(const Duration(days: 3))),
+        Reminder(title: '期限過ぎタスク例', when: DateTime.now().subtract(const Duration(minutes: 10))), // 期限超過→警告色
     ];
 
     @override
@@ -113,7 +117,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             const SizedBox(height: 8),
 
-                            // リスト（タップで編集）
+                            // リスト（右端：編集🖊️・削除🗑️）
                             Expanded(
                                 child: upcoming.isEmpty
                                     ? const _EmptyList()
@@ -122,28 +126,61 @@ class _HomeScreenState extends State<HomeScreen> {
                                         separatorBuilder: (_, __) => const Divider(height: 1),
                                         itemBuilder: (context, index) {
                                             final Reminder r = upcoming[index];
-                                            return ListTile(
-                                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                                leading: Icon(r.isDone ? Icons.check_circle : Icons.alarm),
-                                                title: Text(r.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                                                subtitle: Text(
-                                                    '${_fmtDateTime(r.when)}（${_remainingText(r.when)}）',
-                                                    maxLines: 2,
+                                            final Color? tileColor = _tileColorFor(r);
+                                            final String subtitleText = _subtitleFor(r);
+
+                                            return Container(
+                                                color: tileColor, // 状態に応じた色
+                                                child: ListTile(
+                                                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                                    leading: Icon(r.isDone ? Icons.check_circle : Icons.alarm),
+                                                    title: Text(r.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                                    subtitle: Text(subtitleText, maxLines: 2),
+                                                    // 右端アクション（編集・削除）
+                                                    trailing: Row(
+                                                        mainAxisSize: MainAxisSize.min,
+                                                        children: [
+                                                            IconButton(
+                                                                tooltip: '編集',
+                                                                icon: const Icon(Icons.edit),
+                                                                onPressed: () async {
+                                                                    final int originalIdx = _reminders.indexOf(r);
+                                                                    final Reminder? edited = await _openReminderSheet(context, initial: r);
+                                                                    if (edited != null) {
+                                                                        setState(() => _reminders[originalIdx] = edited);
+                                                                        ScaffoldMessenger.of(context).showSnackBar(
+                                                                            const SnackBar(content: Text('リマインドを更新しました')),
+                                                                        );
+                                                                    }
+                                                                },
+                                                            ),
+                                                            IconButton(
+                                                                tooltip: '削除',
+                                                                icon: const Icon(Icons.delete),
+                                                                onPressed: () async {
+                                                                    final bool? ok = await _confirmDelete(context);
+                                                                    if (ok == true) {
+                                                                        setState(() => _reminders.remove(r));
+                                                                        ScaffoldMessenger.of(context).showSnackBar(
+                                                                            const SnackBar(content: Text('リマインドを削除しました')),
+                                                                        );
+                                                                    }
+                                                                },
+                                                            ),
+                                                        ],
+                                                    ),
+                                                    onTap: () async {
+                                                        // タップでも編集可（好みで無効化してもOK）
+                                                        final int originalIdx = _reminders.indexOf(r);
+                                                        final Reminder? edited = await _openReminderSheet(context, initial: r);
+                                                        if (edited != null) {
+                                                            setState(() => _reminders[originalIdx] = edited);
+                                                            ScaffoldMessenger.of(context).showSnackBar(
+                                                                const SnackBar(content: Text('リマインドを更新しました')),
+                                                            );
+                                                        }
+                                                    },
                                                 ),
-                                                trailing: const Icon(Icons.chevron_right),
-                                                onTap: () async {
-                                                    // 編集：sheetを初期値付きで開く
-                                                    final int originalIdx = _reminders.indexOf(r);
-                                                    final Reminder? edited = await _openReminderSheet(context, initial: r);
-                                                    if (edited != null) {
-                                                        setState(() {
-                                                            _reminders[originalIdx] = edited;
-                                                        });
-                                                        ScaffoldMessenger.of(context).showSnackBar(
-                                                            const SnackBar(content: Text('リマインドを更新しました')),
-                                                        );
-                                                    }
-                                                },
                                             );
                                         },
                                     ),
@@ -155,6 +192,34 @@ class _HomeScreenState extends State<HomeScreen> {
         );
     }
 
+    /// 状態に応じた行の色
+    Color? _tileColorFor(Reminder r) {
+        final Duration diff = r.when.difference(DateTime.now());
+        final bool overdue = diff.isNegative;
+        final bool warningSoon = !overdue && diff < const Duration(hours: 1);
+        final bool snoozing = r.snoozeCount > 0;
+
+        // 警告（赤系）：期限超過 or スヌーズ中
+        if (overdue || snoozing) {
+            return Colors.red.withOpacity(0.12); // うっすら赤
+        }
+        // 注意（黄系）：1時間未満
+        if (warningSoon) {
+            return Colors.amber.withOpacity(0.16); // うっすら黄
+        }
+        // 通常
+        return null;
+    }
+
+    /// サブタイトル表示：「YYYY/MM/DD HH:mm（あとX）」＋スヌーズ回数
+    String _subtitleFor(Reminder r) {
+        final String base = '${_fmtDateTime(r.when)}（${_remainingText(r.when)}）';
+        if (r.snoozeCount > 0) {
+            return '$base / スヌーズ${r.snoozeCount}回';
+        }
+        return base;
+    }
+
     /// 作成/編集ポップアップ（大型モーダル）
     Future<Reminder?> _openReminderSheet(BuildContext context, {Reminder? initial}) async {
         return await showModalBottomSheet<Reminder>(
@@ -163,6 +228,20 @@ class _HomeScreenState extends State<HomeScreen> {
             useSafeArea: true,
             showDragHandle: true,
             builder: (_) => _ReminderSheet(initial: initial),
+        );
+    }
+
+    Future<bool?> _confirmDelete(BuildContext context) async {
+        return showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+                title: const Text('削除しますか？'),
+                content: const Text('このリマインドを削除します。よろしいですか？'),
+                actions: [
+                    TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('キャンセル')),
+                    FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('削除')),
+                ],
+            ),
         );
     }
 
@@ -231,6 +310,7 @@ class _ReminderSheetState extends State<_ReminderSheet> {
     final TextEditingController _noteCtl = TextEditingController();
     final TextEditingController _snoozeIntervalCtl = TextEditingController(text: '5'); // 分
     final TextEditingController _snoozeMaxCtl = TextEditingController(text: '3');      // 回
+    final TextEditingController _snoozeCountCtl = TextEditingController(text: '0');    // 回数表示・編集可
 
     DateTime? _selectedDate;
     TimeOfDay? _selectedTime;
@@ -239,7 +319,6 @@ class _ReminderSheetState extends State<_ReminderSheet> {
     @override
     void initState() {
         super.initState();
-        // 初期値（編集時）
         final Reminder? init = widget.initial;
         if (init != null) {
             _titleCtl.text = init.title;
@@ -251,6 +330,7 @@ class _ReminderSheetState extends State<_ReminderSheet> {
             if (init.snoozeMaxCount != null) {
                 _snoozeMaxCtl.text = init.snoozeMaxCount.toString();
             }
+            _snoozeCountCtl.text = init.snoozeCount.toString();
             _selectedDate = DateTime(init.when.year, init.when.month, init.when.day);
             _selectedTime = TimeOfDay(hour: init.when.hour, minute: init.when.minute);
         }
@@ -262,6 +342,7 @@ class _ReminderSheetState extends State<_ReminderSheet> {
         _noteCtl.dispose();
         _snoozeIntervalCtl.dispose();
         _snoozeMaxCtl.dispose();
+        _snoozeCountCtl.dispose();
         super.dispose();
     }
 
@@ -273,6 +354,8 @@ class _ReminderSheetState extends State<_ReminderSheet> {
             final int? maxCnt = int.tryParse(_snoozeMaxCtl.text);
             if (interval == null || interval < 1) return false;
             if (maxCnt == null || maxCnt < 1) return false;
+            final int? cnt = int.tryParse(_snoozeCountCtl.text);
+            if (cnt == null || cnt < 0) return false;
         }
         return true;
     }
@@ -397,48 +480,76 @@ class _ReminderSheetState extends State<_ReminderSheet> {
                                 crossFadeState: _useSnooze ? CrossFadeState.showFirst : CrossFadeState.showSecond,
                                 firstChild: Padding(
                                     padding: const EdgeInsets.only(top: 4, bottom: 8),
-                                    child: Row(
+                                    child: Column(
                                         children: [
-                                            SizedBox(
-                                                width: 120,
-                                                child: TextFormField(
-                                                    controller: _snoozeIntervalCtl,
-                                                    decoration: const InputDecoration(
-                                                        labelText: '分ごとに',
-                                                        border: OutlineInputBorder(),
+                                            Row(
+                                                children: [
+                                                    SizedBox(
+                                                        width: 120,
+                                                        child: TextFormField(
+                                                            controller: _snoozeIntervalCtl,
+                                                            decoration: const InputDecoration(
+                                                                labelText: '分ごとに',
+                                                                border: OutlineInputBorder(),
+                                                            ),
+                                                            keyboardType: TextInputType.number,
+                                                            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                                                            onChanged: (_) => setState(() {}),
+                                                            validator: (_) {
+                                                                if (!_useSnooze) return null;
+                                                                final int? v = int.tryParse(_snoozeIntervalCtl.text);
+                                                                if (v == null || v < 1) return '1以上を入力';
+                                                                return null;
+                                                            },
+                                                        ),
                                                     ),
-                                                    keyboardType: TextInputType.number,
-                                                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                                                    onChanged: (_) => setState(() {}),
-                                                    validator: (_) {
-                                                        if (!_useSnooze) return null;
-                                                        final int? v = int.tryParse(_snoozeIntervalCtl.text);
-                                                        if (v == null || v < 1) return '1以上を入力';
-                                                        return null;
-                                                    },
-                                                ),
+                                                    const SizedBox(width: 8),
+                                                    const Text('最大'),
+                                                    const SizedBox(width: 8),
+                                                    SizedBox(
+                                                        width: 120,
+                                                        child: TextFormField(
+                                                            controller: _snoozeMaxCtl,
+                                                            decoration: const InputDecoration(
+                                                                labelText: '回',
+                                                                border: OutlineInputBorder(),
+                                                            ),
+                                                            keyboardType: TextInputType.number,
+                                                            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                                                            onChanged: (_) => setState(() {}),
+                                                            validator: (_) {
+                                                                if (!_useSnooze) return null;
+                                                                final int? v = int.tryParse(_snoozeMaxCtl.text);
+                                                                if (v == null || v < 1) return '1以上を入力';
+                                                                return null;
+                                                            },
+                                                        ),
+                                                    ),
+                                                ],
                                             ),
-                                            const SizedBox(width: 8),
-                                            const Text('最大'),
-                                            const SizedBox(width: 8),
-                                            SizedBox(
-                                                width: 120,
-                                                child: TextFormField(
-                                                    controller: _snoozeMaxCtl,
-                                                    decoration: const InputDecoration(
-                                                        labelText: '回',
-                                                        border: OutlineInputBorder(),
+                                            const SizedBox(height: 8),
+                                            // スヌーズ回数（表示・編集可能）
+                                            Row(
+                                                children: [
+                                                    Expanded(
+                                                        child: TextFormField(
+                                                            controller: _snoozeCountCtl,
+                                                            decoration: const InputDecoration(
+                                                                labelText: 'スヌーズ回数',
+                                                                hintText: '0以上の整数',
+                                                                border: OutlineInputBorder(),
+                                                            ),
+                                                            keyboardType: TextInputType.number,
+                                                            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                                                            validator: (_) {
+                                                                if (!_useSnooze) return null;
+                                                                final int? v = int.tryParse(_snoozeCountCtl.text);
+                                                                if (v == null || v < 0) return '0以上を入力';
+                                                                return null;
+                                                            },
+                                                        ),
                                                     ),
-                                                    keyboardType: TextInputType.number,
-                                                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                                                    onChanged: (_) => setState(() {}),
-                                                    validator: (_) {
-                                                        if (!_useSnooze) return null;
-                                                        final int? v = int.tryParse(_snoozeMaxCtl.text);
-                                                        if (v == null || v < 1) return '1以上を入力';
-                                                        return null;
-                                                    },
-                                                ),
+                                                ],
                                             ),
                                         ],
                                     ),
@@ -459,6 +570,8 @@ class _ReminderSheetState extends State<_ReminderSheet> {
                                         final DateTime? when = _mergedDateTime;
                                         if (when == null) return;
 
+                                        final int parsedSnoozeCount = int.tryParse(_snoozeCountCtl.text) ?? 0;
+
                                         final Reminder result = (widget.initial == null)
                                             ? Reminder(
                                                 title: _titleCtl.text.trim(),
@@ -467,6 +580,7 @@ class _ReminderSheetState extends State<_ReminderSheet> {
                                                 useSnooze: _useSnooze,
                                                 snoozeIntervalMinutes: _useSnooze ? int.parse(_snoozeIntervalCtl.text) : null,
                                                 snoozeMaxCount: _useSnooze ? int.parse(_snoozeMaxCtl.text) : null,
+                                                snoozeCount: _useSnooze ? parsedSnoozeCount : 0,
                                             )
                                             : widget.initial!.copyWith(
                                                 title: _titleCtl.text.trim(),
@@ -475,6 +589,7 @@ class _ReminderSheetState extends State<_ReminderSheet> {
                                                 useSnooze: _useSnooze,
                                                 snoozeIntervalMinutes: _useSnooze ? int.parse(_snoozeIntervalCtl.text) : null,
                                                 snoozeMaxCount: _useSnooze ? int.parse(_snoozeMaxCtl.text) : null,
+                                                snoozeCount: _useSnooze ? parsedSnoozeCount : 0,
                                             );
 
                                         Navigator.of(context).pop(result);
